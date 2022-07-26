@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Connection, PublicKey } from '@solana/web3.js';
 import { Program, Provider, web3 } from '@project-serum/anchor';
 import { MintLayout, TOKEN_PROGRAM_ID, Token } from '@solana/spl-token';
@@ -13,6 +13,9 @@ import {
   getNetworkToken,
   CIVIC
 } from './helpers';
+import CountdownTimer from "../CountdownTimer";
+
+require('dotenv').config();
 
 const { SystemProgram } = web3;
 const opts = {
@@ -20,6 +23,10 @@ const opts = {
 };
 
 const CandyMachine = ({ walletAddress }) => {
+
+  const [candyMachine, setCandyMachine] = useState(null);
+  const [timerString, setTimerString] = useState("");
+  const [dropDate, setDropDate] = useState("");
 
   const getCandyMachineCreator = async (candyMachine) => {
     const candyMachineID = new PublicKey(candyMachine);
@@ -88,6 +95,7 @@ const CandyMachine = ({ walletAddress }) => {
 
   const mintToken = async () => {
     const mint = web3.Keypair.generate();
+    if (!mint || !candyMachine?.state) return;
 
     const userTokenAccountAddress = (
       await getAtaForMint(mint.publicKey, walletAddress.publicKey)
@@ -297,14 +305,156 @@ const CandyMachine = ({ walletAddress }) => {
     return [];
   };
 
+  const getProvider = () => {
+    const rpcHost = process.env.REACT_APP_SOLANA_RPC_HOST;
+    // connectionオブジェクトを作成
+    const connection = new Connection(rpcHost);
+  
+    // 新しくSolanaのprovider オブジェクトを作成する
+    const provider = new Provider(
+      connection,
+      window.solana,
+      opts.preflightCommitment
+    );
+  
+    return provider;
+  };
+
+  const getCandyMachineState = async () => {
+    const provider = getProvider();
+    const idl = await Program.fetchIdl(candyMachineProgram, provider);
+    const program = new Program(idl, candyMachineProgram, provider);
+    const candyMachine = await program.account.candyMachine.fetch(
+      process.env.REACT_APP_CANDY_MACHINE_ID
+    );
+
+    const itemsAvailable = candyMachine.data.itemsAvailable.toNumber();
+    const itemsRedeemed = candyMachine.itemsRedeemed.toNumber();
+    const itemsRemaining = itemsAvailable - itemsRedeemed;
+    const goLiveData = candyMachine.data.goLiveDate.toNumber();
+
+    const presale =
+    candyMachine.data.whitelistMintSettings &&
+    candyMachine.data.whitelistMintSettings.presale &&
+    (!candyMachine.data.goLiveDate ||
+    candyMachine.data.goLiveDate.toNumber() > new Date().getTime() / 1000);
+
+    const goLiveDateTimeString = `${new Date(
+      goLiveData * 1000
+    ).toUTCString()}`
+
+    // このデータをstateに追加してレンダリングする
+    setCandyMachine({
+      id: process.env.REACT_APP_CANDY_MACHINE_ID,
+      program,
+      state: {
+        itemsAvailable,
+        itemsRedeemed,
+        itemsRemaining,
+        goLiveData,
+        goLiveDateTimeString,
+        isSoldOut: itemsRemaining === 0,
+        isActive:
+          (presale ||
+            candyMachine.data.goLiveDate.toNumber() < new Date().getTime() / 1000) &&
+          (candyMachine.endSettings
+            ? candyMachine.endSettings.endSettingType.date
+              ? candyMachine.endSettings.number.toNumber() > new Date().getTime() / 1000
+              : itemsRedeemed < candyMachine.endSettings.number.toNumber()
+            : true),
+        isPresale: presale,
+        goLiveDate: candyMachine.data.goLiveDate,
+        treasury: candyMachine.wallet,
+        tokenMint: candyMachine.tokenMint,
+        gatekeeper: candyMachine.data.gatekeeper,
+        endSettings: candyMachine.data.endSettings,
+        whitelistMintSettings: candyMachine.data.whitelistMintSettings,
+        hiddenSettings: candyMachine.data.hiddenSettings,
+        price: candyMachine.data.price,
+      },
+    });
+
+    console.log({
+      itemsAvailable,
+      itemsRedeemed,
+      itemsRemaining,
+      goLiveData,
+      goLiveDateTimeString,
+    });
+  };
+
+  useEffect(() => {
+    getCandyMachineState();
+  }, []);
+
+  useEffect(() => {
+    console.log("Setting interval...");
+  
+    // setIntervalを使用して、このコードの一部を1秒ごとに実行します。
+    const interval = setInterval(() => {
+      const currentDate = new Date().getTime();
+      const distance = dropDate - currentDate;
+  
+      // 時間の計算をするだけで、さまざまなプロパティを得ることができます
+      const days = Math.floor(distance / (1000 * 60 * 60 * 24));
+      const hours = Math.floor(
+        (distance % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)
+      );
+      const minutes = Math.floor((distance % (1000 * 60 * 60)) / (1000 * 60));
+      const seconds = Math.floor((distance % (1000 * 60)) / 1000);
+  
+      // 得られた出力結果を設定します
+      setTimerString(`${days}d ${hours}h ${minutes}m ${seconds}s`);
+  
+      // distanceが0になったらドロップタイムが来たことを示します
+      if (distance < 0) {
+        console.log("Clearing interval...");
+        clearInterval(interval);
+      }
+    }, 1000);
+  
+    // コンポーネントが取り外されたときには、intervalを初期化しましょう。
+    return () => {
+      if (interval) {
+        clearInterval(interval);
+      }
+    };
+  }, []);
+
+  // レンダリング関数を作成します
+  const renderDropTimer = () => {
+    // JavaScriptのDateオブジェクトで現在の日付とDropDateを取得します
+    const currentDate = new Date();
+    const dropDate = new Date(candyMachine.state.goLiveData * 1000);
+
+    //もし現在の日時がドロップ日よりも前の場合、カウントダウンコンポーネントをレンダリングします
+    if (currentDate < dropDate) {
+      console.log("Before drop date!");
+      // CountdownTimer コンポーネントを返します
+      return <CountdownTimer dropDate={timerString} />;
+    }
+
+    // 条件に満たない場合はドロップ日のみを返します
+    return <p>{`Drop Date: ${candyMachine.state.goLiveDateTimeString}`}</p>;
+  };
+
   return (
-    <div className="machine-container">
-      <p>Drop Date:</p>
-      <p>Items Minted:</p>
-      <button className="cta-button mint-button" onClick={mintToken}>
-        Mint NFT
-      </button>
-    </div>
+    candyMachine &&
+    candyMachine.state && (
+      <div className="machine-container">
+        {renderDropTimer()}
+        <p>{`Items Minted: ${candyMachine.state.itemsRedeemed} / ${candyMachine.state.itemsAvailable}`}</p>
+        {/* プロパティが等しいかチェックします */}
+        {candyMachine.state.itemsRedeemed ===
+        candyMachine.state.itemsAvailable ? (
+          <p className="sub-text">Sold Out 🙊</p>
+        ) : (
+          <button className="cta-button mint-button" onClick={mintToken}>
+            Mint NFT
+          </button>
+        )}
+      </div>
+    )
   );
 };
 

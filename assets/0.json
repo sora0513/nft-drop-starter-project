@@ -1,0 +1,19 @@
+{
+  "name": "YOGATEST NFT",
+  "symbol": "",
+  "image": "0.png",
+  "properties": {
+    "files": [
+      {
+        "uri": "0.png",
+        "type": "image/png"
+      }
+    ],
+    "creators": [
+      {
+        "address": "BvnsSev5wXr79WmXiHHVsWr3GVZJwKNQvENMtH1rPw6g",
+        "share": 100
+      }
+    ]
+  }
+}
